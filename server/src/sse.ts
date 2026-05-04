@@ -1,0 +1,147 @@
+import type { XY } from "./hue.ts";
+
+const BRIDGE_IP = process.env.HUE_BRIDGE_IP;
+const APP_KEY = process.env.HUE_APP_KEY;
+
+if (!BRIDGE_IP || !APP_KEY) {
+  throw new Error("Missing HUE_BRIDGE_IP or HUE_APP_KEY in .env");
+}
+
+export type ResourceUpdate = {
+  type: "light" | "grouped_light";
+  id: string;
+  on?: boolean;
+  brightness?: number;
+  xy?: XY;
+  mirek?: number | null;
+};
+
+type Subscriber = (update: ResourceUpdate) => void;
+const subscribers = new Set<Subscriber>();
+
+export function subscribe(fn: Subscriber): () => void {
+  subscribers.add(fn);
+  return () => {
+    subscribers.delete(fn);
+  };
+}
+
+let started = false;
+export function startBridgeStream(): void {
+  if (started) return;
+  started = true;
+  void loop();
+}
+
+async function loop() {
+  while (true) {
+    try {
+      await streamFromBridge();
+    } catch (e) {
+      console.error("[sse] bridge stream error:", e);
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+async function streamFromBridge() {
+  const res = await fetch(`https://${BRIDGE_IP}/eventstream/clip/v2`, {
+    headers: {
+      "hue-application-key": APP_KEY!,
+      Accept: "text/event-stream",
+    },
+    tls: { rejectUnauthorized: false },
+  });
+
+  if (!res.ok || !res.body) {
+    throw new Error(`bridge stream returned ${res.status}`);
+  }
+
+  console.log("[sse] connected to bridge stream");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) throw new Error("bridge stream ended");
+    buffer += decoder.decode(value, { stream: true });
+
+    let idx;
+    while ((idx = buffer.indexOf("\n\n")) !== -1) {
+      const block = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      processEventBlock(block);
+    }
+  }
+}
+
+function processEventBlock(block: string) {
+  for (const line of block.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    const json = line.slice(line.startsWith("data: ") ? 6 : 5);
+    let events: unknown;
+    try {
+      events = JSON.parse(json);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(events)) continue;
+    for (const ev of events as RawEvent[]) {
+      if (ev?.type !== "update" || !Array.isArray(ev.data)) continue;
+      for (const raw of ev.data) {
+        const update = normalize(raw);
+        if (update) broadcast(update);
+      }
+    }
+  }
+}
+
+type RawEvent = { type: string; data: RawResource[] };
+type RawResource = {
+  id?: string;
+  type?: string;
+  on?: { on: boolean };
+  dimming?: { brightness: number };
+  color?: { xy: XY };
+  color_temperature?: { mirek: number | null; mirek_valid: boolean };
+};
+
+function normalize(raw: RawResource): ResourceUpdate | null {
+  if (!raw.id || !raw.type) return null;
+  if (raw.type !== "light" && raw.type !== "grouped_light") return null;
+
+  const update: ResourceUpdate = { type: raw.type, id: raw.id };
+
+  if (raw.on?.on !== undefined) update.on = raw.on.on;
+  if (raw.dimming?.brightness !== undefined) update.brightness = raw.dimming.brightness;
+  if (raw.color?.xy) update.xy = raw.color.xy;
+  if (raw.color_temperature) {
+    update.mirek = raw.color_temperature.mirek_valid
+      ? raw.color_temperature.mirek
+      : null;
+  }
+
+  // Skip events with nothing relevant — e.g. just a metadata change.
+  if (
+    update.on === undefined &&
+    update.brightness === undefined &&
+    update.xy === undefined &&
+    update.mirek === undefined
+  ) {
+    return null;
+  }
+
+  return update;
+}
+
+function broadcast(update: ResourceUpdate) {
+  for (const sub of subscribers) {
+    try {
+      sub(update);
+    } catch (e) {
+      console.error("[sse] subscriber error:", e);
+    }
+  }
+}

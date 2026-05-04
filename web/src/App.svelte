@@ -3,7 +3,16 @@
   import RoomCard from "./lib/RoomCard.svelte";
   import Tabs from "./lib/Tabs.svelte";
   import { getLights, putLight, getRooms, putRoom } from "./lib/api";
-  import type { Light, LightUpdate, Room } from "./lib/types";
+  import type { Light, LightUpdate, Room, XY } from "./lib/types";
+
+  type LiveUpdate = {
+    type: "light" | "grouped_light";
+    id: string;
+    on?: boolean;
+    brightness?: number;
+    xy?: XY;
+    mirek?: number | null;
+  };
 
   let lights = $state<Light[]>([]);
   let rooms = $state<Room[]>([]);
@@ -71,6 +80,36 @@
       console.error(`Failed to update room ${room.name}:`, e);
     }
   }
+
+  function applyLiveUpdate(u: LiveUpdate) {
+    if (u.type === "light") {
+      const light = lights.find((l) => l.id === u.id);
+      if (!light) return;
+      if (u.on !== undefined) light.on = u.on;
+      if (u.brightness !== undefined) light.brightness = u.brightness;
+      if (u.xy && light.color) light.color.xy = u.xy;
+      if (u.mirek !== undefined && light.colorTemp) light.colorTemp.mirek = u.mirek;
+    } else {
+      const room = rooms.find((r) => r.groupedLightId === u.id);
+      if (!room) return;
+      if (u.on !== undefined) room.state.on = u.on;
+      if (u.brightness !== undefined) room.state.brightness = u.brightness;
+      if (u.xy) room.state.xy = u.xy;
+      if (u.mirek !== undefined) room.state.mirek = u.mirek;
+    }
+  }
+
+  $effect(() => {
+    const es = new EventSource("/api/events");
+    es.onmessage = (e) => {
+      try {
+        applyLiveUpdate(JSON.parse(e.data) as LiveUpdate);
+      } catch {
+        // bad payload, drop
+      }
+    };
+    return () => es.close();
+  });
 
   load();
 </script>
