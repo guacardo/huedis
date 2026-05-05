@@ -18,6 +18,7 @@
   } from "./lib/api";
   import type {
     ActiveAnimation,
+    Animation,
     Light,
     LightUpdate,
     Room,
@@ -65,20 +66,10 @@
     }
   }
 
-  async function startAnimation(roomId: string) {
+  async function startAnimation(roomId: string, animation: Animation) {
     try {
-      await startAnimationApi(roomId, {
-        type: "interval",
-        speed: 0.5, // 1 revolution per 2 minutes
-        saturation: 0.85,
-      });
-      animations = [
-        ...animations,
-        {
-          roomId,
-          animation: { type: "interval", speed: 0.5, saturation: 0.85 },
-        },
-      ];
+      await startAnimationApi(roomId, animation);
+      animations = [...animations, { roomId, animation }];
     } catch (e) {
       console.error("Start animation failed:", e);
     }
@@ -266,7 +257,7 @@
           {room}
           {lights}
           scenes={scenes.filter((s) => s.roomId === room.id)}
-          animating={animations.some((a) => a.roomId === room.id)}
+          activeAnimation={animations.find((a) => a.roomId === room.id)?.animation ?? null}
           onChangeRoom={(u) => updateRoom(room.groupedLightId, u)}
           onChangeLight={(id, u) => updateLight(id, u)}
           onCreateScene={createScene}

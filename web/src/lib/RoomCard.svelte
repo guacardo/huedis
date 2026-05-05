@@ -1,6 +1,14 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import type { Light, LightUpdate, Room, Scene, SceneAction, XY } from "./types";
+  import type {
+    Animation,
+    Light,
+    LightUpdate,
+    Room,
+    Scene,
+    SceneAction,
+    XY,
+  } from "./types";
   import { xyToRgb, rgbToHex, mirekToHex } from "./color";
   import LightCard from "./Light.svelte";
   import ColorWheel from "./ColorWheel.svelte";
@@ -12,7 +20,7 @@
     room,
     lights,
     scenes,
-    animating,
+    activeAnimation,
     onChangeRoom,
     onChangeLight,
     onCreateScene,
@@ -26,7 +34,7 @@
     room: Room;
     lights: Light[];
     scenes: Scene[];
-    animating: boolean;
+    activeAnimation: Animation | null;
     onChangeRoom: (update: LightUpdate) => void;
     onChangeLight: (id: string, update: LightUpdate) => void;
     onCreateScene: (roomId: string, name: string, actions: SceneAction[]) => void;
@@ -34,9 +42,25 @@
     onRenameScene: (sceneId: string, name: string) => void;
     onUpdateSceneActions: (sceneId: string, actions: SceneAction[]) => void;
     onDeleteScene: (sceneId: string) => void;
-    onStartAnimation: (roomId: string) => void;
+    onStartAnimation: (roomId: string, animation: Animation) => void;
     onStopAnimation: (roomId: string) => void;
   } = $props();
+
+  // Pomodoro form state — held local; resets if the room collapses.
+  let pomodoroFormOpen = $state(false);
+  let workInput = $state(25);
+  let breakInput = $state(5);
+
+  function startPomodoro() {
+    const w = Math.max(1, Math.min(180, Math.round(workInput)));
+    const b = Math.max(1, Math.min(60, Math.round(breakInput)));
+    onStartAnimation(room.id, { type: "pomodoro", workMinutes: w, breakMinutes: b });
+    pomodoroFormOpen = false;
+  }
+
+  function startInterval() {
+    onStartAnimation(room.id, { type: "interval", speed: 0.5, saturation: 0.85 });
+  }
 
   let children = $derived(lights.filter((l) => room.lightIds.includes(l.id)));
 
@@ -284,16 +308,61 @@
       />
 
       {#if hasColor}
-        <div class="anim-row">
-          <span class="anim-title">Animation</span>
-          {#if animating}
-            <button class="anim-btn stop" onclick={() => onStopAnimation(room.id)}
-              >■ Stop spinning</button
-            >
-          {:else}
-            <button class="anim-btn" onclick={() => onStartAnimation(room.id)}
-              >▶ Spinning rainbow</button
-            >
+        <div class="anim-block">
+          <div class="anim-row">
+            <span class="anim-title">Animation</span>
+            {#if activeAnimation === null}
+              <div class="anim-buttons">
+                <button class="anim-btn" onclick={startInterval}
+                  >▶ Spinning rainbow</button
+                >
+                <button
+                  class="anim-btn"
+                  onclick={() => (pomodoroFormOpen = !pomodoroFormOpen)}
+                  aria-expanded={pomodoroFormOpen}>🍅 Pomodoro</button
+                >
+              </div>
+            {:else if activeAnimation.type === "interval"}
+              <button class="anim-btn stop" onclick={() => onStopAnimation(room.id)}
+                >■ Stop spinning</button
+              >
+            {:else}
+              <button class="anim-btn stop" onclick={() => onStopAnimation(room.id)}
+                >🍅 Stop pomodoro
+                ({activeAnimation.workMinutes}/{activeAnimation.breakMinutes})</button
+              >
+            {/if}
+          </div>
+
+          {#if activeAnimation === null && pomodoroFormOpen}
+            <div class="pomodoro-form">
+              <label>
+                Work
+                <input
+                  type="number"
+                  bind:value={workInput}
+                  min="1"
+                  max="180"
+                />
+                min
+              </label>
+              <label>
+                Break
+                <input
+                  type="number"
+                  bind:value={breakInput}
+                  min="1"
+                  max="60"
+                />
+                min
+              </label>
+              <button class="anim-btn stop" onclick={startPomodoro}
+                >🍅 Start</button
+              >
+              <button class="anim-btn" onclick={() => (pomodoroFormOpen = false)}
+                >Cancel</button
+              >
+            </div>
           {/if}
         </div>
       {/if}
@@ -472,11 +541,61 @@
     padding: 1rem;
   }
 
+  .anim-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+  }
+
   .anim-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     width: 100%;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .anim-buttons {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+  }
+
+  .pomodoro-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    background: #1a1a1a;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    font-size: 0.85rem;
+  }
+
+  .pomodoro-form label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: #ccc;
+  }
+
+  .pomodoro-form input[type="number"] {
+    width: 3rem;
+    background: #222;
+    border: 1px solid #444;
+    color: #eee;
+    padding: 0.2rem 0.4rem;
+    border-radius: 0.25rem;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pomodoro-form input[type="number"]:focus {
+    outline: none;
+    border-color: #ffaa44;
   }
 
   .anim-title {

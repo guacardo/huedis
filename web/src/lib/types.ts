@@ -67,7 +67,14 @@ export type IntervalAnimation = {
   saturation: number;  // 0..1
 };
 
-export type Animation = IntervalAnimation;
+export type PomodoroAnimation = {
+  type: "pomodoro";
+  workMinutes: number;
+  breakMinutes: number;
+};
+
+export type Animation = IntervalAnimation | PomodoroAnimation;
+export type AnimationKind = Animation["type"];
 
 export type ActiveAnimation = {
   roomId: string;
