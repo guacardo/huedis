@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -e
+
+PROJECT_DIR="/mnt/box1/CODE/huedis"
+PORT=6001
+URL="http://localhost:${PORT}"
+LOG="/tmp/huedis-server.log"
+
+cd "$PROJECT_DIR"
+
+if [ ! -d "web/dist" ]; then
+  bun run build
+fi
+
+if ! curl -sf "${URL}/api/lights" >/dev/null 2>&1; then
+  setsid bun run server/src/index.ts >"$LOG" 2>&1 </dev/null &
+  for _ in $(seq 1 50); do
+    sleep 0.2
+    if curl -sf "${URL}/api/lights" >/dev/null 2>&1; then
+      break
+    fi
+  done
+fi
+
+exec chromium \
+  --app="$URL" \
+  --user-data-dir="$HOME/.config/chromium-huedis" \
+  --class=huedis \
+  --name=huedis

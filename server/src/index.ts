@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { serveStatic } from "hono/bun";
 import {
   listLights,
   listRooms,
@@ -119,6 +120,15 @@ app.get("/api/events", (c) =>
     unsub();
   }),
 );
+
+app.use("/*", serveStatic({ root: "./web/dist" }));
+app.get("*", async (c) => {
+  const file = Bun.file("./web/dist/index.html");
+  if (!(await file.exists())) {
+    return c.text("web/dist not found — run `bun run build` first", 503);
+  }
+  return c.html(await file.text());
+});
 
 startBridgeStream();
 

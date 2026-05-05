@@ -8,7 +8,9 @@
     "dev:server": "bun --hot run server/src/index.ts",
     "dev:web": "cd web && bun run dev",
     "dev": "concurrently -n server,web -c blue,magenta 'bun run dev:server' 'bun run dev:web'",
-    "start": "bun run server/src/index.ts"
+    "build": "cd web && bun run build",
+    "start": "bun run server/src/index.ts",
+    "start:prod": "bun run build && bun run server/src/index.ts"
   },
   "dependencies": {
     "hono": "^4.6.0"
