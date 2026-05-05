@@ -1,11 +1,5 @@
 import type { XY } from "./hue.ts";
-
-const BRIDGE_IP = process.env.HUE_BRIDGE_IP;
-const APP_KEY = process.env.HUE_APP_KEY;
-
-if (!BRIDGE_IP || !APP_KEY) {
-  throw new Error("Missing HUE_BRIDGE_IP or HUE_APP_KEY in .env");
-}
+import { BRIDGE_HOST, APPLICATION_KEY } from "./bridge.ts";
 
 export type ResourceUpdate = {
   type: "light" | "grouped_light";
@@ -14,6 +8,7 @@ export type ResourceUpdate = {
   brightness?: number;
   xy?: XY;
   mirek?: number | null;
+  effect?: string;
 };
 
 type Subscriber = (update: ResourceUpdate) => void;
@@ -34,20 +29,26 @@ export function startBridgeStream(): void {
 }
 
 async function loop() {
+  let backoff = 2000;
   while (true) {
+    const start = Date.now();
     try {
       await streamFromBridge();
     } catch (e) {
       console.error("[sse] bridge stream error:", e);
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    // If the stream ran for 30+ seconds it was healthy — reset the backoff.
+    if (Date.now() - start > 30_000) backoff = 2000;
+    console.log(`[sse] reconnecting in ${backoff}ms`);
+    await new Promise((r) => setTimeout(r, backoff));
+    backoff = Math.min(backoff * 2, 60_000);
   }
 }
 
 async function streamFromBridge() {
-  const res = await fetch(`https://${BRIDGE_IP}/eventstream/clip/v2`, {
+  const res = await fetch(`https://${BRIDGE_HOST}/eventstream/clip/v2`, {
     headers: {
-      "hue-application-key": APP_KEY!,
+      "hue-application-key": APPLICATION_KEY,
       Accept: "text/event-stream",
     },
     tls: { rejectUnauthorized: false },
@@ -106,6 +107,7 @@ type RawResource = {
   dimming?: { brightness: number };
   color?: { xy: XY };
   color_temperature?: { mirek: number | null; mirek_valid: boolean };
+  effects_v2?: { status?: { effect?: string } };
 };
 
 function normalize(raw: RawResource): ResourceUpdate | null {
@@ -122,13 +124,17 @@ function normalize(raw: RawResource): ResourceUpdate | null {
       ? raw.color_temperature.mirek
       : null;
   }
+  if (raw.effects_v2?.status?.effect !== undefined) {
+    update.effect = raw.effects_v2.status.effect;
+  }
 
   // Skip events with nothing relevant — e.g. just a metadata change.
   if (
     update.on === undefined &&
     update.brightness === undefined &&
     update.xy === undefined &&
-    update.mirek === undefined
+    update.mirek === undefined &&
+    update.effect === undefined
   ) {
     return null;
   }

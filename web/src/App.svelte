@@ -2,8 +2,29 @@
   import LightCard from "./lib/Light.svelte";
   import RoomCard from "./lib/RoomCard.svelte";
   import Tabs from "./lib/Tabs.svelte";
-  import { getLights, putLight, getRooms, putRoom } from "./lib/api";
-  import type { Light, LightUpdate, Room, XY } from "./lib/types";
+  import {
+    getLights,
+    putLight,
+    getRooms,
+    putRoom,
+    getScenes,
+    postScene,
+    putScene,
+    recallSceneApi,
+    deleteSceneApi,
+    getAnimations,
+    startAnimationApi,
+    stopAnimationApi,
+  } from "./lib/api";
+  import type {
+    ActiveAnimation,
+    Light,
+    LightUpdate,
+    Room,
+    Scene,
+    SceneAction,
+    XY,
+  } from "./lib/types";
 
   type LiveUpdate = {
     type: "light" | "grouped_light";
@@ -12,10 +33,13 @@
     brightness?: number;
     xy?: XY;
     mirek?: number | null;
+    effect?: string;
   };
 
   let lights = $state<Light[]>([]);
   let rooms = $state<Room[]>([]);
+  let scenes = $state<Scene[]>([]);
+  let animations = $state<ActiveAnimation[]>([]);
   let tab = $state<"lights" | "rooms">("lights");
   let error = $state<string | null>(null);
   let loading = $state(true);
@@ -24,13 +48,104 @@
     loading = true;
     error = null;
     try {
-      const [ls, rs] = await Promise.all([getLights(), getRooms()]);
+      const [ls, rs, sc, an] = await Promise.all([
+        getLights(),
+        getRooms(),
+        getScenes(),
+        getAnimations(),
+      ]);
       lights = ls;
       rooms = rs;
+      scenes = sc;
+      animations = an;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
       loading = false;
+    }
+  }
+
+  async function startAnimation(roomId: string) {
+    try {
+      await startAnimationApi(roomId, {
+        type: "interval",
+        speed: 0.5, // 1 revolution per 2 minutes
+        saturation: 0.85,
+      });
+      animations = [
+        ...animations,
+        {
+          roomId,
+          animation: { type: "interval", speed: 0.5, saturation: 0.85 },
+        },
+      ];
+    } catch (e) {
+      console.error("Start animation failed:", e);
+    }
+  }
+
+  async function stopAnimation(roomId: string) {
+    const before = animations;
+    animations = animations.filter((a) => a.roomId !== roomId);
+    try {
+      await stopAnimationApi(roomId);
+    } catch (e) {
+      animations = before;
+      console.error("Stop animation failed:", e);
+    }
+  }
+
+  async function createScene(roomId: string, name: string, actions: SceneAction[]) {
+    try {
+      const { id } = await postScene(roomId, name, actions);
+      scenes = [...scenes, { id, roomId, name, actions }];
+    } catch (e) {
+      console.error("Create scene failed:", e);
+    }
+  }
+
+  async function recallScene(sceneId: string) {
+    try {
+      await recallSceneApi(sceneId);
+    } catch (e) {
+      console.error("Recall scene failed:", e);
+    }
+  }
+
+  async function renameScene(sceneId: string, name: string) {
+    const scene = scenes.find((s) => s.id === sceneId);
+    if (!scene) return;
+    const before = scene.name;
+    scene.name = name;
+    try {
+      await putScene(sceneId, { name });
+    } catch (e) {
+      scene.name = before;
+      console.error("Rename scene failed:", e);
+    }
+  }
+
+  async function updateSceneActions(sceneId: string, actions: SceneAction[]) {
+    const scene = scenes.find((s) => s.id === sceneId);
+    if (!scene) return;
+    const before = scene.actions;
+    scene.actions = actions;
+    try {
+      await putScene(sceneId, { actions });
+    } catch (e) {
+      scene.actions = before;
+      console.error("Update scene failed:", e);
+    }
+  }
+
+  async function deleteScene(sceneId: string) {
+    const before = scenes;
+    scenes = scenes.filter((s) => s.id !== sceneId);
+    try {
+      await deleteSceneApi(sceneId);
+    } catch (e) {
+      scenes = before;
+      console.error("Delete scene failed:", e);
     }
   }
 
@@ -43,12 +158,14 @@
       brightness: light.brightness,
       colorXY: light.color ? { ...light.color.xy } : null,
       mirek: light.colorTemp?.mirek ?? null,
+      effect: light.effects?.current ?? null,
     };
 
     if (update.on !== undefined) light.on = update.on;
     if (update.brightness !== undefined) light.brightness = update.brightness;
     if (update.xy !== undefined && light.color) light.color.xy = update.xy;
     if (update.mirek !== undefined && light.colorTemp) light.colorTemp.mirek = update.mirek;
+    if (update.effect !== undefined && light.effects) light.effects.current = update.effect;
 
     try {
       await putLight(id, update);
@@ -58,6 +175,7 @@
       light.brightness = before.brightness;
       if (light.color && before.colorXY) light.color.xy = before.colorXY;
       if (light.colorTemp) light.colorTemp.mirek = before.mirek;
+      if (light.effects && before.effect !== null) light.effects.current = before.effect;
       console.error(`Failed to update ${light.name}:`, e);
     }
   }
@@ -89,6 +207,7 @@
       if (u.brightness !== undefined) light.brightness = u.brightness;
       if (u.xy && light.color) light.color.xy = u.xy;
       if (u.mirek !== undefined && light.colorTemp) light.colorTemp.mirek = u.mirek;
+      if (u.effect !== undefined && light.effects) light.effects.current = u.effect;
     } else {
       const room = rooms.find((r) => r.groupedLightId === u.id);
       if (!room) return;
@@ -146,8 +265,17 @@
         <RoomCard
           {room}
           {lights}
+          scenes={scenes.filter((s) => s.roomId === room.id)}
+          animating={animations.some((a) => a.roomId === room.id)}
           onChangeRoom={(u) => updateRoom(room.groupedLightId, u)}
           onChangeLight={(id, u) => updateLight(id, u)}
+          onCreateScene={createScene}
+          onRecallScene={recallScene}
+          onRenameScene={renameScene}
+          onUpdateSceneActions={updateSceneActions}
+          onDeleteScene={deleteScene}
+          onStartAnimation={startAnimation}
+          onStopAnimation={stopAnimation}
         />
       {/each}
     </div>

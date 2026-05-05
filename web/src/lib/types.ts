@@ -17,6 +17,10 @@ export type Light = {
     min: number;
     max: number;
   } | null;
+  effects: {
+    current: string;
+    supported: string[];
+  } | null;
 };
 
 export type LightUpdate = {
@@ -24,6 +28,7 @@ export type LightUpdate = {
   brightness?: number;
   xy?: XY;
   mirek?: number;
+  effect?: string;
 };
 
 export type RoomState = {
@@ -39,4 +44,32 @@ export type Room = {
   groupedLightId: string;
   lightIds: string[];
   state: RoomState;
+};
+
+export type SceneAction = {
+  lightId: string;
+  on?: boolean;
+  brightness?: number;
+  xy?: XY;
+  mirek?: number;
+};
+
+export type Scene = {
+  id: string;
+  name: string;
+  roomId: string;
+  actions: SceneAction[];
+};
+
+export type IntervalAnimation = {
+  type: "interval";
+  speed: number;       // revolutions per minute
+  saturation: number;  // 0..1
+};
+
+export type Animation = IntervalAnimation;
+
+export type ActiveAnimation = {
+  roomId: string;
+  animation: Animation;
 };

@@ -1,13 +1,5 @@
-const BRIDGE_IP = process.env.HUE_BRIDGE_IP;
-const APP_KEY = process.env.HUE_APP_KEY;
+import { bridgeGet, bridgePut } from "./bridge.ts";
 
-if (!BRIDGE_IP || !APP_KEY) {
-  throw new Error("Missing HUE_BRIDGE_IP or HUE_APP_KEY in .env");
-}
-
-const BASE = `https://${BRIDGE_IP}/clip/v2/resource`;
-const HEADERS = { "hue-application-key": APP_KEY };
-const TLS = { rejectUnauthorized: false };
 const TRANSITION_MS = 200;
 
 export type XY = { x: number; y: number };
@@ -29,6 +21,10 @@ export type Light = {
     min: number;
     max: number;
   } | null;
+  effects: {
+    current: string;
+    supported: string[];
+  } | null;
 };
 
 export type LightUpdate = {
@@ -36,6 +32,7 @@ export type LightUpdate = {
   brightness?: number;
   xy?: XY;
   mirek?: number;
+  effect?: string;
 };
 
 export type RoomState = {
@@ -68,6 +65,10 @@ type RawLight = {
     mirek_valid: boolean;
     mirek_schema: { mirek_minimum: number; mirek_maximum: number };
   };
+  effects_v2?: {
+    action: { effect_values: string[] };
+    status: { effect: string; effect_values: string[] };
+  };
 };
 
 type RawRoom = {
@@ -90,12 +91,6 @@ type RawGroupedLight = {
   color_temperature?: { mirek: number | null; mirek_valid: boolean };
 };
 
-async function bridgeGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}/${path}`, { headers: HEADERS, tls: TLS });
-  if (!res.ok) throw new Error(`Bridge GET ${path} → ${res.status}: ${await res.text()}`);
-  return ((await res.json()) as { data: T }).data;
-}
-
 function mapLight(l: RawLight): Light {
   return {
     id: l.id,
@@ -114,6 +109,12 @@ function mapLight(l: RawLight): Light {
           mirek: l.color_temperature.mirek_valid ? l.color_temperature.mirek : null,
           min: l.color_temperature.mirek_schema.mirek_minimum,
           max: l.color_temperature.mirek_schema.mirek_maximum,
+        }
+      : null,
+    effects: l.effects_v2
+      ? {
+          current: l.effects_v2.status.effect,
+          supported: l.effects_v2.action.effect_values,
         }
       : null,
   };
@@ -174,24 +175,15 @@ function buildUpdateBody(update: LightUpdate): Record<string, unknown> {
   if (update.brightness !== undefined) body.dimming = { brightness: update.brightness };
   if (update.xy !== undefined) body.color = { xy: update.xy };
   if (update.mirek !== undefined) body.color_temperature = { mirek: update.mirek };
+  if (update.effect !== undefined) body.effects_v2 = { action: { effect: update.effect } };
   body.dynamics = { duration: TRANSITION_MS };
   return body;
 }
 
-async function bridgePut(url: string, update: LightUpdate): Promise<void> {
-  const res = await fetch(url, {
-    method: "PUT",
-    headers: { ...HEADERS, "Content-Type": "application/json" },
-    tls: TLS,
-    body: JSON.stringify(buildUpdateBody(update)),
-  });
-  if (!res.ok) throw new Error(`Bridge PUT ${url} → ${res.status}: ${await res.text()}`);
-}
-
 export async function updateLight(id: string, update: LightUpdate): Promise<void> {
-  return bridgePut(`${BASE}/light/${id}`, update);
+  await bridgePut<unknown>(`light/${id}`, buildUpdateBody(update));
 }
 
 export async function updateGroupedLight(id: string, update: LightUpdate): Promise<void> {
-  return bridgePut(`${BASE}/grouped_light/${id}`, update);
+  await bridgePut<unknown>(`grouped_light/${id}`, buildUpdateBody(update));
 }

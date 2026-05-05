@@ -1,16 +1,41 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import type { Light, LightUpdate, Room, XY } from "./types";
+  import type { Light, LightUpdate, Room, Scene, SceneAction, XY } from "./types";
   import { xyToRgb, rgbToHex, mirekToHex } from "./color";
   import LightCard from "./Light.svelte";
   import ColorWheel from "./ColorWheel.svelte";
   import Tabs from "./Tabs.svelte";
+  import Effects from "./Effects.svelte";
+  import Scenes from "./Scenes.svelte";
 
-  let { room, lights, onChangeRoom, onChangeLight }: {
+  let {
+    room,
+    lights,
+    scenes,
+    animating,
+    onChangeRoom,
+    onChangeLight,
+    onCreateScene,
+    onRecallScene,
+    onRenameScene,
+    onUpdateSceneActions,
+    onDeleteScene,
+    onStartAnimation,
+    onStopAnimation,
+  }: {
     room: Room;
     lights: Light[];
+    scenes: Scene[];
+    animating: boolean;
     onChangeRoom: (update: LightUpdate) => void;
     onChangeLight: (id: string, update: LightUpdate) => void;
+    onCreateScene: (roomId: string, name: string, actions: SceneAction[]) => void;
+    onRecallScene: (sceneId: string) => void;
+    onRenameScene: (sceneId: string, name: string) => void;
+    onUpdateSceneActions: (sceneId: string, actions: SceneAction[]) => void;
+    onDeleteScene: (sceneId: string) => void;
+    onStartAnimation: (roomId: string) => void;
+    onStopAnimation: (roomId: string) => void;
   } = $props();
 
   let children = $derived(lights.filter((l) => room.lightIds.includes(l.id)));
@@ -67,6 +92,30 @@
   let repMirek = $derived(
     children.find((l) => l.colorTemp?.mirek != null)?.colorTemp?.mirek ?? null,
   );
+
+  // Effects supported by ALL effect-capable children — intersection.
+  // Hide if there's only "no_effect" left (nothing useful to pick).
+  let groupEffects = $derived.by(() => {
+    const fx = children.filter((l) => l.effects);
+    if (fx.length === 0) return null;
+    const sets = fx.map((l) => new Set(l.effects!.supported));
+    const intersection = [...sets[0]!].filter((e) => sets.every((s) => s.has(e)));
+    return intersection.length > 1 ? intersection : null;
+  });
+
+  // Group "current" effect: if all effect-capable children agree, use that; else "no_effect".
+  let groupCurrentEffect = $derived.by(() => {
+    const fx = children.filter((l) => l.effects);
+    if (fx.length === 0) return "no_effect";
+    const first = fx[0]!.effects!.current;
+    return fx.every((l) => l.effects!.current === first) ? first : "no_effect";
+  });
+
+  function onPickEffect(effect: string) {
+    for (const child of children) {
+      if (child.effects) onChangeLight(child.id, { effect });
+    }
+  }
 
   let expanded = $state(false);
   let mode = $state<"color" | "white">(
@@ -213,6 +262,43 @@
           {/if}
         </div>
       {/if}
+
+      {#if groupEffects}
+        <Effects
+          current={groupCurrentEffect}
+          supported={groupEffects}
+          disabled={!anyOn}
+          onpick={onPickEffect}
+        />
+      {/if}
+
+      <Scenes
+        {scenes}
+        lightIds={room.lightIds}
+        {lights}
+        onCreate={(name, actions) => onCreateScene(room.id, name, actions)}
+        onRecall={onRecallScene}
+        onRename={onRenameScene}
+        onUpdateActions={onUpdateSceneActions}
+        onDelete={onDeleteScene}
+      />
+
+      {#if hasColor}
+        <div class="anim-row">
+          <span class="anim-title">Animation</span>
+          {#if animating}
+            <button class="anim-btn stop" onclick={() => onStopAnimation(room.id)}
+              >■ Stop spinning</button
+            >
+          {:else}
+            <button class="anim-btn" onclick={() => onStartAnimation(room.id)}
+              >▶ Spinning rainbow</button
+            >
+          {/if}
+        </div>
+      {/if}
+
+
 
       {#if children.length > 0}
         <div class="children">
@@ -384,5 +470,45 @@
     font-size: 0.875rem;
     text-align: center;
     padding: 1rem;
+  }
+
+  .anim-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .anim-title {
+    font-size: 0.875rem;
+    opacity: 0.7;
+  }
+
+  .anim-btn {
+    background: transparent;
+    border: 1px solid #444;
+    color: #ddd;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.8rem;
+    font-family: inherit;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+
+  .anim-btn:hover {
+    border-color: #ffaa44;
+    color: #ffaa44;
+  }
+
+  .anim-btn.stop {
+    background: #ffaa44;
+    border-color: #ffaa44;
+    color: #1a1a1a;
+    font-weight: 500;
+  }
+
+  .anim-btn.stop:hover {
+    background: #ffbe66;
+    color: #1a1a1a;
   }
 </style>

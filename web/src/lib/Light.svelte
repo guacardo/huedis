@@ -4,6 +4,7 @@
   import { xyToRgb, rgbToHex, mirekToHex } from "./color";
   import ColorWheel from "./ColorWheel.svelte";
   import Tabs from "./Tabs.svelte";
+  import Effects from "./Effects.svelte";
 
   let { light, onChange }: {
     light: Light;
@@ -158,6 +159,15 @@
         {@render wheel()}
       {:else if hasCT}
         {@render ctSlider()}
+      {/if}
+
+      {#if light.effects && light.effects.supported.length > 1}
+        <Effects
+          current={light.effects.current}
+          supported={light.effects.supported}
+          disabled={!light.on}
+          onpick={(effect) => onChange({ effect })}
+        />
       {/if}
     </div>
   {/if}
